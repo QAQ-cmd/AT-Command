@@ -27,58 +27,56 @@ typedef struct {
     void (*handler)(char *recvbuf, int size); 
 }utc_item_t;
 
+/*AT接口适配器 ---------------------------------------------------------------*/
 typedef struct {
-    unsigned int (*write)(const void *buf, unsigned int len);   /*发送接口*/
-    unsigned int (*read)(void *buf, unsigned int len);          /*接收接口*/
-    /*Events -----------------------------------------------------------------*/
-    void         (*before_at)(void);                            /*开始执行AT*/
-    void         (*after_at)(void);
-    void         (*error)(void);
-	utc_item_t    *utc_tbl;                                     /*utc 表*/
-	unsigned char *urc_buf;                                     /*urc接收缓冲区*/
-    unsigned char *rcv_buf;
-	unsigned short urc_tbl_count;
-	unsigned short urc_bufsize;                                 /*urc缓冲区大小*/
-    unsigned short rcv_bufsize;                                 /*接收缓冲区*/
-}at_obj_conf_t;
+    unsigned int (*write)(const void *buf, unsigned int len); /* 发送接口*/
+    unsigned int (*read)(void *buf, unsigned int len);        /* 接收接口*/
+    void         (*error)(void);                              /* AT执行异常事件*/
+	utc_item_t    *utc_tbl;                                   /* urc 表*/
+	unsigned char *urc_buf;                                   /* urc接收缓冲区*/
+    unsigned char *recv_buf;                                  /* 数据缓冲区*/
+	unsigned short urc_tbl_count;                             /* urc表项个数*/
+	unsigned short urc_bufsize;                               /* urc缓冲区大小*/
+    unsigned short recv_bufsize;                              /* 接收缓冲区大小*/
+}at_adapter_t;
 
 /*AT作业运行环境*/
 typedef struct {
-	int         i,j,state;   
+	int         i,j,state;                                    
 	void        *params;
-    void        (*reset_timer)(struct at_obj *at);
+    void        (*reset_timer)(struct at_obj *at); 
 	bool        (*is_timeout)(struct at_obj *at, unsigned int ms); /*时间跨度判断*/
 	void        (*printf)(struct at_obj *at, const char *fmt, ...);
 	char *      (*find)(struct at_obj *at, const char *expect);
-    char *      (*recvbuf)(struct at_obj *at);                 /*指向接收缓冲区*/
-    unsigned int(*recvlen)(struct at_obj *at);                 /*缓冲区总长度*/
-    void        (*recvclr)(struct at_obj *at);                 /*清空接收缓冲区*/
-    bool        (*abort)(struct at_obj *at);                   /*终止执行*/
+    char *      (*recvbuf)(struct at_obj *at);                 /* 指向接收缓冲区*/
+    unsigned int(*recvlen)(struct at_obj *at);                 /* 缓冲区总长度*/
+    void        (*recvclr)(struct at_obj *at);                 /* 清空接收缓冲区*/
+    bool        (*abort)(struct at_obj *at);                   /* 终止执行*/
 }at_env_t;
 
 /*AT命令响应码*/
 typedef enum {
-    AT_RET_OK = 0,                                             /*执行成功*/
-    AT_RET_ERROR,                                              /*执行错误*/
-    AT_RET_TIMEOUT,                                            /*响应超时*/
-	AT_RET_ABORT,                                              /*强行中止*/
+    AT_RET_OK = 0,                                             /* 执行成功*/
+    AT_RET_ERROR,                                              /* 执行错误*/
+    AT_RET_TIMEOUT,                                            /* 响应超时*/
+	AT_RET_ABORT,                                              /* 强行中止*/
 }at_return;
 
 /*AT响应 */
 typedef struct {
-    void           *param;
-	char           *recvbuf;
-	unsigned short  recvcnt;
-    at_return       ret;
+    void           *param;                                     
+	char           *recvbuf;                                   /* 接收缓冲区*/
+	unsigned short  recvcnt;                                   /* 接收数据长度*/
+    at_return       ret;                                       /* AT执行结果*/
 }at_response_t;
 
-typedef void (*at_callbatk_t)(at_response_t *r);
-
-/*AT状态 */
+typedef void (*at_callbatk_t)(at_response_t *r);               /* AT 执行回调*/
+ 
+/*AT状态 (当前版本未用) ------------------------------------------------------*/
 typedef enum {
-    AT_STATE_IDLE,                                             /*空闲状态*/
-    AT_STATE_WAIT,                                             /*等待执行*/
-    AT_STATE_EXEC,                                             /*正在执行*/
+    AT_STATE_IDLE,                                             /* 空闲状态*/
+    AT_STATE_WAIT,                                             /* 等待执行*/
+    AT_STATE_EXEC,                                             /* 正在执行*/
 }at_work_state;
 
 /*AT作业项*/
@@ -93,7 +91,7 @@ typedef struct {
 
 /*AT管理器 ------------------------------------------------------------------*/
 typedef struct at_obj{
-	at_obj_conf_t          cfg;
+	at_adapter_t            adap;
     at_env_t                env;
 	at_item_t               tbl[10];
     at_item_t               *cursor;
@@ -102,7 +100,7 @@ typedef struct at_obj{
 	unsigned int            urc_timer;
 	at_return               ret;
 	//urc接收计数, 命令响应接收计数器
-	unsigned short          urc_cnt, rcv_cnt;
+	unsigned short          urc_cnt, recv_cnt;
 	unsigned char           suspend: 1;
 }at_obj_t;
 
@@ -114,15 +112,14 @@ typedef struct {
     unsigned short timeout;                                 /*最大超时时间 */
 }at_cmd_t;
 
-void at_obj_init(at_obj_t *at, const at_obj_conf_t cfg);
+void at_obj_init(at_obj_t *at, const at_adapter_t *);
 
-/*发送单行AT命令*/
 bool at_send_singlline(at_obj_t *at, at_callbatk_t cb, const char *singlline);
-/*发送多行AT命令*/
+
 bool at_send_multiline(at_obj_t *at, at_callbatk_t cb, const char **multiline);
-/*执行AT命令*/
+
 bool at_do_cmd(at_obj_t *at, void *params, const at_cmd_t *cmd);
-/*自定义AT作业*/
+
 bool at_do_work(at_obj_t *at, int (*work)(at_env_t *e), void *params);
 
 void at_item_abort(at_item_t *it);                          /*终止当前作业*/

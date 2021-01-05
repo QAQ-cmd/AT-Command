@@ -9,7 +9,7 @@
  * Date           Author       Notes 
  * 2020-01-02     Morro        Initial version. 
  ******************************************************************************/
- 
+
 #ifndef _AT_H_
 #define _AT_H_
 
@@ -17,7 +17,7 @@
 #include "list.h"
 #include <stdbool.h>
 
-#define MAX_AT_CMD_LEN          64
+#define MAX_AT_CMD_LEN        128
 
 struct at_obj;                                                  /*AT对象*/
 
@@ -27,17 +27,17 @@ typedef struct {
     void (*handler)(char *recvbuf, int size); 
 }utc_item_t;
     
-/*AT配置项 -------------------------------------------------------------------*/
+/*AT接口适配器 ---------------------------------------------------------------*/
 typedef struct {
     /*数据读写接口 -----------------------------------------------------------*/
     unsigned int (*read)(void *buf, unsigned int len);          
     unsigned int (*write)(const void *buf, unsigned int len);
-    void         (*debug)(const char *fmt, ...);
-	utc_item_t    *utc_tbl;                                     /*utc 表*/
-	char          *urc_buf;                                     /*urc接收缓冲区*/
-	unsigned short urc_tbl_count;
-	unsigned short urc_bufsize;                                 /*urc缓冲区大小*/
-}at_conf_t;
+    void         (*debug)(const char *fmt, ...);                 
+	utc_item_t    *utc_tbl;                                     /* utc 表*/
+	char          *urc_buf;                                     /* urc接收缓冲区*/
+	unsigned short urc_tbl_count;                               /* urc表项个数*/
+	unsigned short urc_bufsize;                                 /* urc缓冲区大小*/
+}at_adapter_t;
 
 /*AT命令响应码 ---------------------------------------------------------------*/
 typedef enum {
@@ -52,11 +52,11 @@ typedef struct {
     const char    *matcher;                                     /*接收匹配串*/
     char          *recvbuf;                                     /*接收缓冲区*/
     unsigned short bufsize;                                     /*最大接收长度*/
-    unsigned int   timeout;                                     /*最大超时时间 */    
+    unsigned int   timeout;                                     /*最大超时时间 */
 }at_respond_t;
 
 /*AT作业 ---------------------------------------------------------------------*/
-typedef struct at_work_env{   
+typedef struct at_work_env {
     struct at_obj *at;
 	void          *params;                                     
     unsigned int (*write)(const void *buf, unsigned int len);
@@ -70,7 +70,7 @@ typedef struct at_work_env{
 /*AT对象 ---------------------------------------------------------------------*/
 typedef struct at_obj {
     struct list_head        node;
-	at_conf_t               cfg;   
+	at_adapter_t            adap;   
     at_work_env_t           env;
 	at_sem_t                cmd_lock;                           /*命令锁*/
 	at_sem_t                completed;                          /*命令处理完成*/
@@ -85,9 +85,9 @@ typedef struct at_obj {
     unsigned char           dowork : 1;
 }at_obj_t;
 
-typedef int (*at_work)(at_work_env_t *);
+typedef at_return (*at_work)(at_work_env_t *);
 
-void at_obj_create(at_obj_t *at, const at_conf_t cfg);         /*AT初始化*/
+void at_obj_create(at_obj_t *at, const at_adapter_t *adap);    /*AT初始化*/
 
 void at_obj_destroy(at_obj_t *at);
 
@@ -99,9 +99,9 @@ void at_resume(at_obj_t *at);                                  /*恢复*/
 
 at_return at_do_cmd(at_obj_t *at, at_respond_t *r, const char *cmd);
 
-int at_split_respond_lines(char *recvbuf, char *lines[], int count);
+int at_split_respond_lines(char *recvbuf, char *lines[], int count, char separator);
 
-int at_do_work(at_obj_t *at, at_work work, void *params);      /*执行AT作业*/
+at_return at_do_work(at_obj_t *at, at_work work, void *params);/*执行AT作业*/
 
 void at_thread(void);                                          /*AT线程*/
         
