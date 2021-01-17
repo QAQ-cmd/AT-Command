@@ -3,8 +3,9 @@
 	
 #include <stddef.h>		
 
-#define typeof	(struct list_head)
-
+#if !defined(__GNUC__)
+    #define typeof	(struct list_head)
+#endif
 
 #undef offsetof
 #define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
@@ -16,7 +17,8 @@
  * @member:	the name of the member within the struct.
  *
  */
-#if defined(__ICCARM__) || defined(__CC_ARM)
+
+#if !defined(__GNUC__)
 #define container_of(ptr, type, member) ( \
 	(type *)( (char *)(ptr) - offsetof(type,member) ))
 #else
