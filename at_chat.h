@@ -1,23 +1,34 @@
 /******************************************************************************
- * @brief        AT指令通信
+ * @brief        AT指令通信管理
  *
- * Copyright (c) 2020, <morro_luo@163.com>
+ * Copyright (c) 2020~2021, <morro_luo@163.com>
  *
  * SPDX-License-Identifier: Apathe-2.0
  *
  * Change Logs: 
  * Date           Author       Notes 
  * 2020-01-02     Morro        初版
+ * 2021-01-20     Morro        增加debug调试接口, 解决链表未初始化导至段错误的问题
+ *                             调通单行命令、多行命令、自定义命令等接口
  ******************************************************************************/
 
 #ifndef _ATCHAT_H_
 #define _ATCHAT_H_
 
-#include "at_util.h"
 #include <list.h>
 #include <stdbool.h>
 
+
+/*最大AT命令长度 --------------------------------------------------------------*/
 #define MAX_AT_CMD_LEN          128
+
+/* debug 打印接口 ------------------------------------------------------------*/
+#include <stdio.h>
+#define AT_DEBUG(...)          printf("[AT]:");printf(__VA_ARGS__) /*do{}while(0)*/
+
+/* 获取系统滴答(ms) -----------------------------------------------------------*/
+#include "platform.h"
+#define AT_GET_TICK()           get_tick()
 
 struct at_obj;
 
@@ -81,24 +92,24 @@ typedef enum {
 
 /*AT作业项*/
 typedef struct {
-    at_work_state state : 3;
-    unsigned char type  : 3;
-    unsigned char abort : 1;
-    void          *param;
-	void          *info;
-    struct list_head node;
+    unsigned int  state : 3;
+    unsigned int  type  : 3;                                 /* 作业类型*/
+    unsigned int  abort : 1; 
+    void          *param;                                    /* 通用参数*/
+	void          *info;                                     /* 通用信息指针*/
+    struct list_head node;                                   /* 链表结点*/
 }at_item_t;
 
 /*AT管理器 ------------------------------------------------------------------*/
 typedef struct at_obj{
 	at_adapter_t            adap;
-    at_env_t                env;
-	at_item_t               tbl[10];
-    at_item_t               *cursor;
-    struct list_head        ls_ready, ls_idle;               /*就绪,空闲作业链*/
-	unsigned int            resp_timer;
-	unsigned int            urc_timer;
-	at_return               ret;
+    at_env_t                env;                             /* 作业运行环境*/
+	at_item_t               items[10];                       /* 最大容纳10个作业*/
+    at_item_t               *cursor;                         /* 当前作业项*/
+    struct list_head        ls_ready, ls_idle;               /* 就绪,空闲作业链*/
+	unsigned int            timer;
+	unsigned int            urc_timer;                       /* urc接收计时器*/
+	at_return               ret; 
 	//urc接收计数, 命令响应接收计数器
 	unsigned short          urc_cnt, recv_cnt;
 	unsigned char           suspend: 1;
