@@ -95,7 +95,12 @@ static int wifi_reset_work(at_env_t *e)
         break;
     case 2:
         wifi_open();                       //重启启动wifi
-        return true;
+        e->state++;
+        break;
+    case 3:
+        if (e->is_timeout(a, 2000))       //延时等待2s      
+            return true;  
+        break;
     }
     return false;
 }
@@ -146,7 +151,8 @@ void wifi_init(void)
     wifi_uart_init(115200);
     at_obj_init(&at, &at_adapter);
          
-    wifi_open();
+    //启动WIFI
+    at_do_work(&at, wifi_reset_work, &at);        
     
     //初始化wifi
     at_send_multiline(&at, at_init_callbatk, wifi_init_cmds);  

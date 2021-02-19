@@ -1,5 +1,6 @@
 # AT Command
 
+
 ## 介绍
 一种AT命令通信解析模块,支持裸机(at_chat)和OS版本(at)。适用于modem、WIFI模块、蓝牙通信。
 
@@ -22,7 +23,7 @@
 
 at_chat 模块使用链式队列进行管理，包含2条链表，空闲链表和就绪链表。它们的每一个基本工作单元称为一个作业项，对于将要执行的命令都会放到就绪链表中，命令执行完成之后由空闲链表来进行回收，作业项的定义如下：
 
-```
+```c
 
 /*AT作业项*/
 typedef struct {
@@ -51,7 +52,7 @@ typedef struct {
 详细使用可以参考Demo程序wifi_task.c模块
 
 ![m169 wifi模组通信效果图](images/wifi.jpg)
-```
+```c
 
 /* 
  * @brief   定义AT控制器
@@ -70,7 +71,7 @@ const at_adapter_t adap = {  //AT适配器接口
 
 3.  初始化AT控制器
 
-```
+```c
 
 at_obj_init(&at, &adap);
 
@@ -79,7 +80,7 @@ at_obj_init(&at, &adap);
 
 4.  将AT控制器放入任务中轮询（考虑到处理实时性，建议20ms以下）
 
-```
+```c
 /* 
  * @brief    wifi任务(10ms 轮询1次)
  */
@@ -99,7 +100,7 @@ void wifi_task(void)
 
 <= OK\r\n
 
-```
+```c
 
 /**
  * @brief AT执行回调处理程序
@@ -124,12 +125,12 @@ at_send_singlline(&at, test_gpio_callback, "AT+GPIO_TEST_EN=1");
 
 - at_do_cmd，执行AT命令，可以通过这个接口进一步封装出一常用的单行命令、多行命令。
 - at_split_respond_lines，命令响应分割器。
-- at_do_work，如果发送的数据比较复杂，如GPRS模组发送短信或者发送socket数据需要等待"<"提示符，可以通过这个接口自定义收发。
+- at_do_work，适用于发送组合命令，如GPRS模组发送短信或者发送socket数据需要等待"<"或者"CONNECT"提示符，可以通过这个接口自定义收发。
 
 ##### 使用演示(后续会提供一个无线GPRS模块演示程序出来)
-```
+```c
 
-static at_obj_t at;          //定义AT控制器
+static at_obj_t at;          //定义AT控制器对象
 
 static char urc_buf[128];    //URC主动上报缓冲区
 
@@ -142,7 +143,8 @@ const at_adapter_t adap = {  //AT适配器接口
 	.urc_bufsize = sizeof(urc_buf),
 	.utc_tbl     = utc_tbl,
 	.urc_tbl_count = sizeof(utc_tbl) / sizeof(utc_item_t),	
-	
+	//debug调试接口
+	.debug       = at_debug, 
 	//适配GPRS模块的串口读写接口
 	.write       = uart_write,
 	.read        = uart_read
@@ -150,15 +152,15 @@ const at_adapter_t adap = {  //AT适配器接口
 
 ```
 
-3.  初始化AT控制器并创建AT线程
+3.  初始化AT控制器并创建AT接收处理线程
 
-```
+```c
 
 void at_thread(void)
 {
 	at_obj_create(&at, &adap);
     while (1) {        
-        at_thread(&at);
+        at_process(&at);
     }
 }
 
@@ -172,7 +174,7 @@ void at_thread(void)
 	<= +CSQ: 24, 0
 	<= OK
 	
-```
+```c
 /* 
  * @brief    获取csq值
  */ 
@@ -189,6 +191,9 @@ bool read_csq_value(at_obj_t *at, int *rssi, int *error_rate)
 	return (sscanf(recv, "%*[^+]+CSQ: %d,%d", rssi, error_rate) == 2);
 
 }
+
+
+
 
 
 ```
