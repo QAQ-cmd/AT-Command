@@ -12,8 +12,8 @@
  * 2021-02-05     Morro        1.修改struct at_obj,去除链表管理机制
  *                             2.删除 at_obj_destroy接口
  ******************************************************************************/
-#include "at/at.h"
-#include "misc/comdef.h"
+#include "at.h"
+#include "comdef.h"
 #include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
@@ -273,7 +273,7 @@ static void urc_recv_process(at_obj_t *at, const char *buf, unsigned int size)
         urc_buf[at->urc_cnt] = '\0';
         at->urc_cnt = 0;
         at->adap.debug("urc recv timeout=>%s\r\n", urc_buf);
-    } 
+    }
     
     while (size--) {
         at->urc_timer = at_get_ms();
