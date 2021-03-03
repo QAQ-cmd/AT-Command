@@ -10,6 +10,7 @@
  * 2020-01-02     Morro        初版
  * 2021-01-20     Morro        增加debug调试接口, 解决链表未初始化导至段错误的问题
  *                             调通单行命令、多行命令、自定义命令等接口
+ * 2021-03-03     Morro        解决未清除URC计数器导致频繁打印接收超时的问题
  ******************************************************************************/
  
 #include "at_chat.h"
@@ -345,6 +346,7 @@ static void urc_handler_entry(at_obj_t *at, char *urc, unsigned int size)
 static void urc_recv_process(at_obj_t *at, char *buf, unsigned int size)
 {
     char *urc_buf;	
+    int ch;
     unsigned short urc_size;
     urc_buf  = (char *)at->adap.urc_buf;
     urc_size = at->adap.urc_bufsize;
@@ -352,20 +354,21 @@ static void urc_recv_process(at_obj_t *at, char *buf, unsigned int size)
     if (size == 0 && at->urc_cnt > 0) {
         if (AT_IS_TIMEOUT(at->urc_timer, 2000)) {       /* 接收超时*/
             urc_handler_entry(at, urc_buf, at->urc_cnt);
-            at->recv_cnt = 0;
+            at->urc_cnt = 0;
             AT_DEBUG("Urc recv timeout.\r\n");
         }
     } else if (urc_buf != NULL){
         at->urc_timer = AT_GET_TICK();
         while (size--) {
-            if (*buf == '\n') {                         /*逐行处理*/
+            ch =  *buf++;
+            urc_buf[at->urc_cnt++] = ch;
+            if (ch == '\n' || ch == '\r' || ch == '\0') { /*urc结束符*/
                 urc_buf[at->urc_cnt] = '\0';
-                urc_handler_entry(at, urc_buf, at->urc_cnt);
-            } else {
-            urc_buf[at->urc_cnt++] = *buf++;
-            if (at->urc_cnt >= urc_size)               /* 溢出处理 */
+                if (at->urc_cnt > 2)
+                    urc_handler_entry(at, urc_buf, at->urc_cnt);
                 at->urc_cnt = 0;
-            }
+            } else if (at->urc_cnt >= urc_size)           /* 溢出处理 */
+                at->urc_cnt = 0;
         }
     }
 }

@@ -7,15 +7,25 @@
  *
  * Change Logs: 
  * Date           Author       Notes 
- * 2021/01/20     Morro    
+ * 2021-01-20     Morro        初版
+ * 2021-03-03     Morro        增加URC使用案例
  ******************************************************************************/
 #include "at_chat.h"
 #include "wifi_uart.h"
 #include "public.h"
 #include "module.h"
+#include "cli.h"
 #include <stdio.h>
 #include <stdbool.h>
 
+/* Private function prototypes -----------------------------------------------*/
+void wifi_open(void);
+void wifi_close(void);
+static void at_error(void);
+void wifi_query_version(void);
+void wifi_ready_handler(char *recvbuf, int size);
+void wifi_connected_handler(char *recvbuf, int size);
+void wifi_disconnected_handler(char *recvbuf, int size);
 
 /* Private variables ---------------------------------------------------------*/
 /* 
@@ -23,25 +33,24 @@
  */
 static at_obj_t at;
 
-
-/* Private function prototypes -----------------------------------------------*/
-void wifi_open(void);
-void wifi_close(void);
-static void at_error(void);
-void wifi_query_version(void);
-
-/* Private functions ---------------------------------------------------------*/
-/* 
- * @brief   wifi urc缓冲区
- */
-//static unsigned char wifi_urcbuf[256];
-
 /* 
  * @brief   wifi 数据接收缓冲区
  */
 static unsigned char wifi_recvbuf[256];
 
+/* 
+ * @brief   wifi URC接收缓冲区
+ */
+static unsigned char wifi_urcbuf[128];
 
+/* 
+ * @brief   wifi URC表
+ */
+static const utc_item_t urc_table[] = {
+    "ready",             wifi_ready_handler,
+    "WIFI CONNECTED:",   wifi_connected_handler,
+    "WIFI DISCONNECTED", wifi_disconnected_handler,
+};
 
 /* 
  * @brief   AT适配器
@@ -50,13 +59,38 @@ static const at_adapter_t  at_adapter = {
     .write    = wifi_uart_write,
     .read     = wifi_uart_read,
     .error    = at_error,
-    .utc_tbl  = NULL,
-    .urc_buf  = NULL,
+    .utc_tbl  = (utc_item_t *)urc_table,
+    .urc_buf  = wifi_urcbuf,
     .recv_buf = wifi_recvbuf,
-    .urc_tbl_count = 0,
-    .urc_bufsize   = 0,
+    .urc_tbl_count = sizeof(urc_table) / sizeof(urc_table[0]),
+    .urc_bufsize   = sizeof(wifi_urcbuf),
     .recv_bufsize = sizeof(wifi_recvbuf)
 };
+
+/* Private functions ---------------------------------------------------------*/
+
+/* 
+ * @brief   wifi开机就绪事件
+ */
+void wifi_ready_handler(char *recvbuf, int size)
+{
+    printf("WIFI ready...\r\n");
+}
+
+/* 
+ * @brief   wifi连接事件
+ */
+static void wifi_connected_handler(char *recvbuf, int size)
+{
+    printf("WIFI connection detected...\r\n");
+}
+/* 
+ * @brief   wifi断开连接事件
+ */
+static void wifi_disconnected_handler(char *recvbuf, int size)
+{
+    printf("WIFI disconnect detected...\r\n");
+}
 
 /* 
  * @brief   打开wifi
@@ -98,7 +132,7 @@ static int wifi_reset_work(at_env_t *e)
         e->state++;
         break;
     case 3:
-        if (e->is_timeout(a, 2000))       //延时等待2s      
+        if (e->is_timeout(a, 5000))       //大约延时等待5s至wifi启动
             return true;  
         break;
     }
