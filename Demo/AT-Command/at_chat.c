@@ -327,10 +327,10 @@ static void urc_handler_entry(at_obj_t *at, char *urc, unsigned int size)
 {
     int i, n;
     utc_item_t *tbl = at->adap.utc_tbl;
-    for (i = 0; i < at->adap.urc_tbl_count; i++) {
+    for (i = 0; i < at->adap.urc_tbl_count; i++, tbl++) {
         n = strlen(tbl->prefix);
-        if (strncmp(urc, tbl->prefix, n) == 0) {               /* 匹配前缀 */
-            tbl[i].handler(urc, size);                        /* 回调处理*/
+        if (strncmp(urc, tbl->prefix, n) == 0) {              /* 匹配前缀 */
+            tbl->handler(urc, size);                        /* 回调处理*/
             break;
         }
     }
@@ -354,8 +354,9 @@ static void urc_recv_process(at_obj_t *at, char *buf, unsigned int size)
     if (size == 0 && at->urc_cnt > 0) {
         if (AT_IS_TIMEOUT(at->urc_timer, 2000)) {       /* 接收超时*/
             urc_handler_entry(at, urc_buf, at->urc_cnt);
+            if (at->urc_cnt > 1)
+                AT_DEBUG("Urc recv timeout.\r\n");
             at->urc_cnt = 0;
-            AT_DEBUG("Urc recv timeout.\r\n");
         }
     } else if (urc_buf != NULL){
         at->urc_timer = AT_GET_TICK();
