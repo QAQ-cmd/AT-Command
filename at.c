@@ -1,17 +1,21 @@
-/******************************************************************************
- * @brief        AT命令通信管理(OS版本)
- *
- * Copyright (c) 2020, <morro_luo@163.com>
- *
- * SPDX-License-Identifier: Apache-2.0
- *
- * Change Logs: 
- * Date           Author       Notes 
- * 2020-01-02     Morro        Initial version. 
- * 2021-02-01     Morro        支持URC回调中接收数据.
- * 2021-02-05     Morro        1.修改struct at_obj,去除链表管理机制
- *                             2.删除 at_obj_destroy接口
- ******************************************************************************/
+/**
+  ******************************************************************************
+  * @brief        AT命令通信管理(OS版本)
+  *
+  * Copyright (c) 2020, <morro_luo@163.com>
+  *
+  * SPDX-License-Identifier: Apache-2.0
+  *
+  * Change Logs: 
+  * Date           Author       Notes 
+  * 2020-01-02     Morro        Initial version. 
+  * 2021-02-01     Morro        支持URC回调中接收数据.
+  * 2021-02-05     Morro        1.修改struct at_obj,去除链表管理机制
+  *                             2.删除 at_obj_destroy接口
+  * 2021-03-21     Morro        删除at_obj中的at_work_ctx_t域,减少内存使用
+  * 2021-04-08     Morro        解决重复释放信号量导致命令出现等待超时的问题
+  ******************************************************************************
+  */
 #include "at.h"
 #include "comdef.h"
 #include <stdarg.h>
@@ -19,26 +23,15 @@
 #include <stdio.h>
 #include <stddef.h>
 
-//超时判断
-#define AT_IS_TIMEOUT(start, time) (at_get_ms() - (start) > (time))
-
-/*
- * @brief    默认调试接口
- */
+/** 
+  * @brief    默认调试接口
+  */
 static void nop_dbg(const char *fmt, ...){}
 
-/*
- * @brief    获取at控制器
- */
-at_obj_t *get_at_obj(struct at_work_ctx *e)
-{
-    return container_of(e, at_obj_t, ctx);
-}
 
-
-/*
- * @brief    输出字符串
- */
+/**
+  * @brief    输出字符串
+  */
 static void put_string(at_obj_t *at, const char *s)
 {
     while (*s != '\0')
@@ -46,9 +39,9 @@ static void put_string(at_obj_t *at, const char *s)
 }
 
 
-/*
- * @brief    输出字符串(带换行)
- */
+/**
+  * @brief    输出字符串(带换行)
+  */
 static void put_line(at_obj_t *at, const char *s)
 {
     put_string(at, s);
@@ -63,43 +56,42 @@ static void at_print(struct at_work_ctx *e, const char *cmd, ...)
     va_start(args, cmd);
     char buf[MAX_AT_CMD_LEN];
     vsnprintf(buf, sizeof(buf), cmd, args);
-    put_line(get_at_obj(e), buf);
+    put_line(e->at, buf);
     va_end(args);	
 }
 
-/*
- * @brief   清除数据缓冲区
- */
+/**
+  * @brief   清除数据缓冲区
+  */
 static void recvbuf_clr(struct at_work_ctx *e)
 {
-    get_at_obj(e)->rcv_cnt = 0;
+    e->at->rcv_cnt = 0;
 }
 
 //等待AT命令响应
 static at_return wait_resp(at_obj_t *at, at_respond_t *r)
-{    
-    at->resp  = r;
+{        
     at->ret   = AT_RET_TIMEOUT;
     at->resp_timer = at_get_ms();    
     at->rcv_cnt = 0;                   //清空接收缓存
+    at->resp  = r;
     at_sem_wait(at->completed, r->timeout);
     at->adap.debug("<-\r\n%s\r\n", r->recvbuf);
     at->resp = NULL;
     return at->ret;
 }
 
-/*
- * @brief       同步响应AT响应
- * @param[in]   resp    - 等待接收串(如"OK",">")
- * @param[in]   timeout - 等待超时时间
- */
-at_return wait_resp_sync(struct at_work_ctx *e, const char *resp, 
-                         unsigned int timeout)
+/**
+  * @brief       等待接收到指定串
+  * @param[in]   resp    - 期待待接收串(如"OK",">")
+  * @param[in]   timeout - 等待超时时间
+  */
+at_return wait_recv(struct at_work_ctx *e, const char *resp, 
+                    unsigned int timeout)
 {
     char buf[64];
     int cnt = 0, len;
-    at_obj_t *at = get_at_obj(e);
-    
+    at_obj_t *at = e->at;    
     at_return ret = AT_RET_TIMEOUT;
     unsigned int timer = at_get_ms();
     while (at_get_ms() - timer < timeout) {
@@ -119,36 +111,29 @@ at_return wait_resp_sync(struct at_work_ctx *e, const char *resp,
     return ret;
 }
 
-
-/*
- * @brief       创建AT控制器
- */
-void at_obj_create(at_obj_t *at, const at_adapter_t *adap)
+/**
+  * @brief       创建AT控制器
+  * @param[in]   adap - AT接口适配器
+  */
+void at_obj_init(at_obj_t *at, const at_adapter_t *adap)
 {
-    at_work_ctx_t *ctx;
     at->adap    = *adap;
     at->rcv_cnt = 0;
     
     at->cmd_lock = ril_sem_new(1);
     at->completed = ril_sem_new(0);
-    ctx          = &at->ctx;    
-    ctx->printf  = at_print;
-    ctx->recvclr = recvbuf_clr;
-    ctx->read    = adap->read;
-    ctx->write   = adap->write;
-    ctx->wait_resp = wait_resp_sync;
-    
+   
     if (at->adap.debug == NULL)
         at->adap.debug = nop_dbg;
     
 }
 
-/*
- * @brief       执行命令
- * @param[in]   fmt    - 格式化输出
- * @param[in]   r      - 响应参数,如果填NULL, 默认返回OK表示成功,等待5s
- * @param[in]   args   - 如变参数列表
- */
+/**
+  * @brief       执行命令
+  * @param[in]   fmt    - 格式化输出
+  * @param[in]   r      - 响应参数,如果填NULL, 默认返回OK表示成功,等待5s
+  * @param[in]   args   - 如变参数列表
+  */
 at_return at_do_cmd(at_obj_t *at, at_respond_t *r, const char *cmd)
 {
     at_return ret;
@@ -172,38 +157,48 @@ at_return at_do_cmd(at_obj_t *at, at_respond_t *r, const char *cmd)
     return ret;    
 }
 
-/*
- * @brief       执行AT作业
- * @param[in]   urc
- * @return      none
- */
-at_return at_do_work(at_obj_t *at, at_work work, void *params)
+/**
+  * @brief       执行AT作业
+  * @param[in]   at    - AT控制器
+  * @param[in]   work  - 作业入口函数(类型 - int (*)(at_work_ctx_t *))
+  * @param[in]   params- 作业参数
+  * @return      依赖于work的返回值
+  */
+int at_do_work(at_obj_t *at, at_work work, void *params)
 {
-    at_return ret;
-    if (!at_sem_wait(at->cmd_lock, 150 * 1000)) {
+    at_work_ctx_t ctx;
+    int ret;
+    if (!at_sem_wait(at->cmd_lock, 150  * 1000)) {
         return AT_RET_TIMEOUT;
     }
     at->busy  = true;
     while (at->urc_cnt) {                            //等待URC处理完成
         at_delay(1);
     }
-    at->ctx.params = params;
+    //构造at_work_ctx_t
+    ctx.params    = params;
+    ctx.printf    = at_print;
+    ctx.recvclr   = recvbuf_clr;
+    ctx.read      = at->adap.read;
+    ctx.write     = at->adap.write;
+    ctx.wait_resp = wait_recv;  
+    ctx.at        = at;
     at->dowork  = true;
     at->rcv_cnt = 0;
-    ret = work(&at->ctx);
+    ret = work(&ctx);
     at->dowork = false;
     at_sem_post(at->cmd_lock);
     at->busy  = false;
     return ret;
 }
 
-/*
- * @brief       分割响应行
- * @param[in]   recvbuf  - 接收缓冲区 
- * @param[out]  lines    - 响应行数组
- * @param[in]   separator- 分割符(, \n)
- * @return      行数
- */
+/**
+  * @brief       分割响应行
+  * @param[in]   recvbuf  - 接收缓冲区 
+  * @param[out]  lines    - 响应行数组
+  * @param[in]   separator- 分割符(, \n)
+  * @return      行数
+  */
 int at_split_respond_lines(char *recvbuf, char *lines[], int count, char separator)
 {
     char *s = recvbuf;
@@ -222,11 +217,11 @@ int at_split_respond_lines(char *recvbuf, char *lines[], int count, char separat
     return i;
 }
 
-/*
- * @brief       urc 处理总入口
- * @param[in]   urcline - URC行
- * @return      true - 正常识别并处理, false - 未识别URC
- */
+/**
+  * @brief       urc 处理总入口
+  * @param[in]   urcline - URC行
+  * @return      true - 正常识别并处理, false - 未识别URC
+  */
 static bool urc_handler_entry(at_obj_t *at, char *urcline, unsigned int size)
 {
     int i;
@@ -257,11 +252,11 @@ static bool urc_handler_entry(at_obj_t *at, char *urcline, unsigned int size)
     return false;        
 }
 
-/*
- * @brief       urc 接收处理
- * @param[in]   ch  - 接收字符
- * @return      none
- */
+/**
+  * @brief       urc 接收处理
+  * @param[in]   ch  - 接收字符
+  * @return      none
+  */
 static void urc_recv_process(at_obj_t *at, const char *buf, unsigned int size)
 {
     register char *urc_buf;	
@@ -269,10 +264,11 @@ static void urc_recv_process(at_obj_t *at, const char *buf, unsigned int size)
     urc_buf  = at->adap.urc_buf;
     
     //接收超时处理,默认MAX_URC_RECV_TIMEOUT
-    if (at->urc_cnt > 0 && AT_IS_TIMEOUT(at->urc_timer, MAX_URC_RECV_TIMEOUT)) {
+    if (at->urc_cnt > 0 && at_istimeout(at->urc_timer, MAX_URC_RECV_TIMEOUT)) {
         urc_buf[at->urc_cnt] = '\0';
         at->urc_cnt = 0;
-        at->adap.debug("urc recv timeout=>%s\r\n", urc_buf);
+        if (at->urc_cnt > 2)
+            at->adap.debug("urc recv timeout=>%s\r\n", urc_buf);
     }
     
     while (size--) {
@@ -297,22 +293,22 @@ static void urc_recv_process(at_obj_t *at, const char *buf, unsigned int size)
     }
 }
 
-/*
- * @brief       命令响应通知
- * @return      none
- */
+/**
+  * @brief       命令响应通知
+  * @return      none
+  */
 static void resp_notification(at_obj_t *at, at_return ret)
 {
     at->ret = ret;
     at_sem_post(at->completed);
 }
 
-/*
- * @brief       指令响应接收处理
- * @param[in]   buf  - 接收缓冲区
- * @param[in]   size - 缓冲区数据长度
- * @return      none
- */
+/**
+  * @brief       指令响应接收处理
+  * @param[in]   buf  - 接收缓冲区
+  * @param[in]   size - 缓冲区数据长度
+  * @return      none
+  */
 static void resp_recv_process(at_obj_t *at, const char *buf, unsigned int size)
 {
     char *rcv_buf;
@@ -337,49 +333,51 @@ static void resp_recv_process(at_obj_t *at, const char *buf, unsigned int size)
         
         if (strstr(rcv_buf, resp->matcher)) {            //接收匹配
             resp_notification(at, AT_RET_OK);
+            return;
         } else if (strstr(rcv_buf, "ERROR")) {
             resp_notification(at, AT_RET_ERROR);
+            return;
         }
     } 
     
-    if (AT_IS_TIMEOUT(at->resp_timer, resp->timeout))    //接收超时
-        resp_notification(at, AT_RET_TIMEOUT);		
+    if (at_istimeout(at->resp_timer, resp->timeout))    //接收超时
+        resp_notification(at, AT_RET_TIMEOUT);
     else if (at->suspend)                                //强制终止
         resp_notification(at, AT_RET_ABORT);
 
 }
 
-/*
- * @brief       AT忙判断
- * @return      true - 有AT指令或者任务正在执行中
- */
+/**
+  * @brief       AT忙判断
+  * @return      true - 有AT指令或者任务正在执行中
+  */
 bool at_obj_busy(at_obj_t *at)
 {
-    return !at->busy && AT_IS_TIMEOUT(at->urc_timer, 2000);
+    return !at->busy && at_istimeout(at->urc_timer, 2000);
 }
 
-/*
- * @brief       挂起AT作业
- * @return      none
- */
+/**
+  * @brief       挂起AT作业
+  * @return      none
+  */
 void at_suspend(at_obj_t *at)
 {
     at->suspend = 1;
 }
 
-/*
- * @brief       恢复AT作业
- * @return      none
- */
+/**
+  * @brief       恢复AT作业
+  * @return      none
+  */
 void at_resume(at_obj_t *at)
 {
     at->suspend = 0;
 }
 
-/*
- * @brief       AT处理
- * @return      none
- */
+/**
+  * @brief       AT处理
+  * @return      none
+  */
 void at_process(at_obj_t *at)
 {
     char c;

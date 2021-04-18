@@ -11,6 +11,8 @@
  * 2021-02-01     Morro        支持URC回调中接收数据.
  * 2021-02-05     Morro        1.修改struct at_obj,去除链表管理机制
  *                             2.删除 at_obj_destroy接口
+ * 2021-03-21     Morro        删除at_obj中的at_work_ctx_t域,减少内存使用
+ * 2021-04-08     Morro        解决重复释放信号量导致命令出现等待超时的问题
  ******************************************************************************/
 
 #ifndef _AT_H_
@@ -102,14 +104,23 @@ typedef struct {
  * @brief AT作业上下文(Work Context) 定义
  */
 typedef struct at_work_ctx {
+    struct at_obj *at;    
     //作业参数,由at_do_work接口传入
-	void          *params;                                     
+	void          *params;
+    
     unsigned int (*write)(const void *buf, unsigned int len);
+    
     unsigned int (*read)(void *buf, unsigned int len);
     
-    //打印输出
+    /**
+     * @brief   格式化打印输出    
+     */     
 	void         (*printf)(struct at_work_ctx *self, const char *fmt, ...);
-    //响应等待
+    /*
+     * @brief       等待回复
+     * @param[in]   prefix  - 期待待接收前缀(如"OK",">")
+     * @param[in]   timeout - 等待超时时间
+     */
 	at_return    (*wait_resp)(struct at_work_ctx *self, const char *prefix, 
                               unsigned int timeout);
     //清除接收缓存
@@ -119,25 +130,21 @@ typedef struct at_work_ctx {
 /*AT对象 ---------------------------------------------------------------------*/
 typedef struct at_obj {
 	at_adapter_t            adap;                             /* 接口适配器*/
-    at_work_ctx_t           ctx;                              /* work context*/
 	at_sem_t                cmd_lock;                         /* 命令锁*/
 	at_sem_t                completed;                        /* 命令完成信号*/
     at_respond_t            *resp;                            /* AT应答信息*/
 	unsigned int            resp_timer;                       /* 响应接收定时器*/
 	unsigned int            urc_timer;                        /* URC定时器 */
 	at_return               ret;                              /* 命令执行结果*/
-	//urc接收计数, 命令响应接收计数器
 	unsigned short          urc_cnt, rcv_cnt;
 	unsigned char           busy   : 1;
 	unsigned char           suspend: 1;
     unsigned char           dowork : 1;
 }at_obj_t;
 
-typedef at_return (*at_work)(at_work_ctx_t *);
+typedef int (*at_work)(at_work_ctx_t *);
 
-void at_obj_create(at_obj_t *at, const at_adapter_t *adap);    /* AT初始化*/
-
-void at_obj_destroy(at_obj_t *at);
+void at_obj_init(at_obj_t *at, const at_adapter_t *adap);      /* AT初始化*/
 
 bool at_obj_busy(at_obj_t *at);
 
@@ -147,10 +154,9 @@ void at_resume(at_obj_t *at);                                  /* 恢复*/
 
 at_return at_do_cmd(at_obj_t *at, at_respond_t *r, const char *cmd);
 
-//响应行分割处理
 int at_split_respond_lines(char *recvbuf, char *lines[], int count, char separator);
 
-at_return at_do_work(at_obj_t *at, at_work work, void *params);/* 自定义AT作业*/
+int at_do_work(at_obj_t *at, at_work work, void *params);      /* 自定义AT作业*/
 
 void at_process(at_obj_t *at);                                 /* AT接收处理*/
         
