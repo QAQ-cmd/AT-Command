@@ -1,5 +1,6 @@
 # AT Command
 
+[![License](https://img.shields.io/badge/license-Apache%202-green.svg)](https://gitee.com/moluo-tech/ril/blob/master/LICENSE)
 
 ## 介绍
 一种AT命令通信解析模块,支持裸机(at_chat)和OS版本(at)。适用于modem、WIFI模块、蓝牙通信。
@@ -129,8 +130,9 @@ at_send_singlline(&at, test_gpio_callback, "AT+GPIO_TEST_EN=1");
 - at_split_respond_lines，命令响应分割器。
 - at_do_work，适用于发送组合命令，如GPRS模组发送短信或者发送socket数据需要等待"<"或者"CONNECT"提示符，可以通过这个接口自定义收发。
 
-#### 演示效果(后续会提供一个无线GPRS模块演示程序出来)
+#### 案例演示
 
+参考我的另外一个项目[RIL(Radio Interface Layer)](https://gitee.com/moluo-tech/ril)
 
 #### 使用步骤
 
