@@ -13,6 +13,7 @@
  *                             2.删除 at_obj_destroy接口
  * 2021-03-21     Morro        删除at_obj中的at_work_ctx_t域,减少内存使用
  * 2021-04-08     Morro        解决重复释放信号量导致命令出现等待超时的问题
+ * 2021-05-15     Morro        优化URC匹配程序
  ******************************************************************************/
 
 #ifndef _AT_H_
@@ -28,7 +29,7 @@
 #define MAX_URC_RECV_TIMEOUT  300      
 
 /* 指定的URC 结束标记列表 */
-#define SPEC_URC_END_MARKS     ",\r\n"
+#define SPEC_URC_END_MARKS     ":,\r\n"
      
 struct at_obj;                                                /* AT对象*/
 
@@ -71,7 +72,7 @@ typedef struct {
      * @params      ctx - URC 上下文
      */
     void (*handler)(at_urc_ctx_t *ctx);
-}utc_item_t;
+}urc_item_t;
     
 /**AT接口适配器 --------------------------------------------------------------*/
 typedef struct {
@@ -82,7 +83,7 @@ typedef struct {
     //调试打印输出,如果不需要则填NULL
     void         (*debug)(const char *fmt, ...);  
     //utc 处理函数表,如果不需要则填NULL
-	utc_item_t    *utc_tbl;
+	urc_item_t    *utc_tbl;
     //urc接收缓冲区,如果不需要则填NULL
 	char          *urc_buf;
     //urc表项个数,如果不需要则填0
@@ -133,10 +134,11 @@ typedef struct at_obj {
 	at_sem_t                cmd_lock;                         /* 命令锁*/
 	at_sem_t                completed;                        /* 命令完成信号*/
     at_respond_t            *resp;                            /* AT应答信息*/
+    const urc_item_t        *urc_item;                        /* 当前URC项*/
 	unsigned int            resp_timer;                       /* 响应接收定时器*/
 	unsigned int            urc_timer;                        /* URC定时器 */
 	at_return               ret;                              /* 命令执行结果*/
-	unsigned short          urc_cnt, rcv_cnt;
+	unsigned short          urc_cnt, rcv_cnt;                 /* 接收计数器*/
 	unsigned char           busy   : 1;
 	unsigned char           suspend: 1;
     unsigned char           dowork : 1;

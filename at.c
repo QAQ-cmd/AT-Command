@@ -14,6 +14,7 @@
   *                             2.删除 at_obj_destroy接口
   * 2021-03-21     Morro        删除at_obj中的at_work_ctx_t域,减少内存使用
   * 2021-04-08     Morro        解决重复释放信号量导致命令出现等待超时的问题
+  * 2021-05-15     Morro        优化URC匹配程序
   ******************************************************************************
   */
 #include "at.h"
@@ -122,7 +123,7 @@ void at_obj_init(at_obj_t *at, const at_adapter_t *adap)
     
     at->cmd_lock = ril_sem_new(1);
     at->completed = ril_sem_new(0);
-   
+    at->urc_item  = NULL;
     if (at->adap.debug == NULL)
         at->adap.debug = nop_dbg;
     
@@ -216,40 +217,34 @@ int at_split_respond_lines(char *recvbuf, char *lines[], int count, char separat
     }    
     return i;
 }
+/**
+  * @brief       从URC缓冲区中查询URC项
+  * @param[in]   urcline - URC行
+  * @return      true - 正常识别并处理, false - 未识别URC
+  */
+const urc_item_t *find_urc_item(at_obj_t *at, char *urc_buf, unsigned int size)
+{
+    const urc_item_t *tbl = at->adap.utc_tbl;
+    int i;
+    if (size < 2)
+        return NULL;
+    for (i = 0; i < at->adap.urc_tbl_count; i++) {
+        if (strstr(urc_buf, tbl->prefix))
+            return tbl;  
+        tbl++;
+    }
+    return NULL;
+}
 
 /**
   * @brief       urc 处理总入口
   * @param[in]   urcline - URC行
-  * @return      true - 正常识别并处理, false - 未识别URC
   */
-static bool urc_handler_entry(at_obj_t *at, char *urcline, unsigned int size)
+static void urc_handler_entry(at_obj_t *at,  char *urcline, unsigned int size)
 {
-    int i;
-    int ch = urcline[size - 1];
     at_urc_ctx_t context = {at->adap.read, urcline, at->adap.urc_bufsize, size};
-    
-    const utc_item_t *tbl = at->adap.utc_tbl;
-    
-    if (tbl == NULL)
-        return true;
-    
-    for (i = 0; i < at->adap.urc_tbl_count; i++) {
-        if (strstr(urcline, tbl->prefix)) {               /* 匹配前缀*/
-            
-            if (tbl->end_mark) {                          /* 匹配结束标记*/
-                if (!strchr(tbl->end_mark, ch))
-                    return false;
-            } else if (!(ch == '\r' || ch == '\n'|| ch == '\0'))
-                return false;
-            
-            at->adap.debug("<=\r\n%s\r\n", urcline);
-            
-            tbl->handler(&context);                       /* 递交到上层处理 */
-            return true;
-        }    
-        tbl++;
-    }
-    return false;        
+    at->adap.debug("<=\r\n%s\r\n", urcline);            
+    at->urc_item->handler(&context);                       /* 递交到上层处理 */      
 }
 
 /**
@@ -266,30 +261,36 @@ static void urc_recv_process(at_obj_t *at, const char *buf, unsigned int size)
     //接收超时处理,默认MAX_URC_RECV_TIMEOUT
     if (at->urc_cnt > 0 && at_istimeout(at->urc_timer, MAX_URC_RECV_TIMEOUT)) {
         urc_buf[at->urc_cnt] = '\0';
-        at->urc_cnt = 0;
+        at->urc_cnt  = 0;
+        at->urc_item = NULL;
         if (at->urc_cnt > 2)
             at->adap.debug("urc recv timeout=>%s\r\n", urc_buf);
-    }
-    
+    }    
     while (size--) {
         at->urc_timer = at_get_ms();
         ch =  *buf++;
         urc_buf[at->urc_cnt++] = ch;
         
-        if (strchr(SPEC_URC_END_MARKS, ch) || ch == '\0') {      //结束标记
-            urc_buf[at->urc_cnt] = '\0';
-            
-            if (ch == '\r' || ch == '\n'|| ch == '\0') {         //检测到1行URC        
-                if (at->urc_cnt > 2) {
-                    if (!urc_handler_entry(at, urc_buf, at->urc_cnt) && !at->busy)   
-                        at->adap.debug("%s\r\n", urc_buf);       //未识别到的URC
+        if (strchr(SPEC_URC_END_MARKS, ch) || ch == '\0') {      //结束标记列表
+            urc_buf[at->urc_cnt] = '\0';    
+            if (at->urc_item == NULL)
+                at->urc_item = find_urc_item(at, urc_buf, at->urc_cnt);       
+            if (at->urc_item != NULL){
+                if (strchr(at->urc_item->end_mark, ch)) {        //匹配结束标记  
+                    urc_handler_entry(at, urc_buf, at->urc_cnt);
+                    at->urc_cnt  = 0;
+                    at->urc_item = NULL;
                 }
-                at->urc_cnt = 0;
-            } else if (urc_handler_entry(at, urc_buf, at->urc_cnt)) {
-                at->urc_cnt = 0;
+            } else if (ch == '\r' || ch == '\n'|| ch == '\0') {
+                if (at->urc_cnt > 2 && !at->busy) {
+                    at->adap.debug("%s\r\n", urc_buf);          //未识别到的URC
+                }
+                at->urc_cnt = 0;                
             }
-        } else if (at->urc_cnt >= at->adap.urc_bufsize)          //溢出处理
-                at->urc_cnt = 0;
+        } else if (at->urc_cnt >= at->adap.urc_bufsize) {         //溢出处理
+            at->urc_cnt = 0;
+            at->urc_item = NULL;
+        }
     }
 }
 
