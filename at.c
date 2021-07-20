@@ -15,6 +15,7 @@
   * 2021-03-21     Morro        删除at_obj中的at_work_ctx_t域,减少内存使用
   * 2021-04-08     Morro        解决重复释放信号量导致命令出现等待超时的问题
   * 2021-05-15     Morro        优化URC匹配程序
+  * 2021-07-20     Morro        增加锁,解决执行at_do_work时urc部分数据丢失问题
   ******************************************************************************
   */
 #include "at.h"
@@ -23,6 +24,10 @@
 #include <string.h>
 #include <stdio.h>
 #include <stddef.h>
+
+#define MAX_AT_LOCK_TIME   60 * 1000     //AT命令锁定时间
+
+static void urc_recv_process(at_obj_t *at, const char *buf, unsigned int size);
 
 /** 
   * @brief    默认调试接口
@@ -39,7 +44,6 @@ static void put_string(at_obj_t *at, const char *s)
         at->adap.write(s++, 1);
 }
 
-
 /**
   * @brief    输出字符串(带换行)
   */
@@ -50,8 +54,28 @@ static void put_line(at_obj_t *at, const char *s)
     at->adap.debug("->\r\n%s\r\n", s);
 }
 
+
+/**
+  * @brief    作业读操作
+  */
+static unsigned int at_work_read(struct at_work_ctx *e, void *buf, unsigned int len)
+{ 
+    at_obj_t *at = e->at;
+    len = at->adap.read(buf, len);
+    urc_recv_process(at, buf, len);             //递交到URC进行处理
+    return len;
+}
+
+/**
+  * @brief    作业写操作
+  */
+static unsigned int at_work_write(struct at_work_ctx *e, const void *buf, unsigned int len)
+{
+    return e->at->adap.write(buf, len);
+}
+
 //打印输出
-static void at_print(struct at_work_ctx *e, const char *cmd, ...)
+static void at_work_print(struct at_work_ctx *e, const char *cmd, ...)
 {
     va_list args;
     va_start(args, cmd);
@@ -59,14 +83,6 @@ static void at_print(struct at_work_ctx *e, const char *cmd, ...)
     vsnprintf(buf, sizeof(buf), cmd, args);
     put_line(e->at, buf);
     va_end(args);	
-}
-
-/**
-  * @brief   清除数据缓冲区
-  */
-static void recvbuf_clr(struct at_work_ctx *e)
-{
-    e->at->rcv_cnt = 0;
 }
 
 //等待AT命令响应
@@ -87,8 +103,7 @@ static at_return wait_resp(at_obj_t *at, at_respond_t *r)
   * @param[in]   resp    - 期待待接收串(如"OK",">")
   * @param[in]   timeout - 等待超时时间
   */
-at_return wait_recv(struct at_work_ctx *e, const char *resp, 
-                    unsigned int timeout)
+at_return wait_recv(struct at_work_ctx *e, const char *resp, unsigned int timeout)
 {
     char buf[64];
     int cnt = 0, len;
@@ -96,17 +111,19 @@ at_return wait_recv(struct at_work_ctx *e, const char *resp,
     at_return ret = AT_RET_TIMEOUT;
     unsigned int timer = at_get_ms();
     while (at_get_ms() - timer < timeout) {
-        len = at->adap.read(buf, sizeof(buf) - cnt);
-        cnt += len;
-        buf[cnt] = '\0';
-        if (strstr(buf, resp)) {
-            ret =  AT_RET_OK;
-            break;
-        } else if (strstr(buf, "ERROR")) {
-            ret =  AT_RET_ERROR;
-            break;
-        }
-        at_delay(10);
+        len = e->read(e, &buf[cnt], sizeof(buf) - cnt);
+        if (len > 0) {
+            cnt += len;
+            buf[cnt] = '\0';
+            if (strstr(buf, resp)) {
+                ret =  AT_RET_OK;
+                break;
+            } else if (strstr(buf, "ERROR")) {
+                ret =  AT_RET_ERROR;
+                break;
+            }
+        } else
+            at_delay(1);
     }
     at->adap.debug("%s\r\n", buf);
     return ret;
@@ -119,10 +136,10 @@ at_return wait_recv(struct at_work_ctx *e, const char *resp,
 void at_obj_init(at_obj_t *at, const at_adapter_t *adap)
 {
     at->adap    = *adap;
-    at->rcv_cnt = 0;
-    
-    at->cmd_lock = ril_sem_new(1);
-    at->completed = ril_sem_new(0);
+    at->rcv_cnt = 0;    
+    at->send_lock = at_sem_new(1);
+    at->recv_lock = at_sem_new(1);
+    at->completed = at_sem_new(0);
     at->urc_item  = NULL;
     if (at->adap.debug == NULL)
         at->adap.debug = nop_dbg;
@@ -143,7 +160,7 @@ at_return at_do_cmd(at_obj_t *at, at_respond_t *r, const char *cmd)
     if (r == NULL) {
         r = &default_resp;                 //默认响应      
     }
-    if (!at_sem_wait(at->cmd_lock, r->timeout)) {
+    if (!at_sem_wait(at->send_lock, r->timeout)) {
         return AT_RET_TIMEOUT;    
     }
     at->busy  = true;
@@ -153,7 +170,7 @@ at_return at_do_cmd(at_obj_t *at, at_respond_t *r, const char *cmd)
     }
     put_line(at, cmd);
     ret = wait_resp(at, r); 
-    at_sem_post(at->cmd_lock);
+    at_sem_post(at->send_lock);
     at->busy  = false;
     return ret;    
 }
@@ -169,26 +186,25 @@ int at_do_work(at_obj_t *at, at_work work, void *params)
 {
     at_work_ctx_t ctx;
     int ret;
-    if (!at_sem_wait(at->cmd_lock, 150  * 1000)) {
+    if (!at_sem_wait(at->send_lock, MAX_AT_LOCK_TIME)) {
         return AT_RET_TIMEOUT;
     }
+    if (!at_sem_wait(at->recv_lock, MAX_AT_LOCK_TIME))
+        return AT_RET_TIMEOUT; 
+    
     at->busy  = true;
-    while (at->urc_cnt) {                            //等待URC处理完成
-        at_delay(1);
-    }
     //构造at_work_ctx_t
     ctx.params    = params;
-    ctx.printf    = at_print;
-    ctx.recvclr   = recvbuf_clr;
-    ctx.read      = at->adap.read;
-    ctx.write     = at->adap.write;
+    ctx.printf    = at_work_print;
+    ctx.read      = at_work_read;
+    ctx.write     = at_work_write;
     ctx.wait_resp = wait_recv;  
     ctx.at        = at;
-    at->dowork  = true;
+     
     at->rcv_cnt = 0;
     ret = work(&ctx);
-    at->dowork = false;
-    at_sem_post(at->cmd_lock);
+    at_sem_post(at->recv_lock);
+    at_sem_post(at->send_lock);
     at->busy  = false;
     return ret;
 }
@@ -381,13 +397,15 @@ void at_resume(at_obj_t *at)
   */
 void at_process(at_obj_t *at)
 {
-    char c;
+    char buf[16];
     unsigned int len;
-    if (at->dowork)      /* 自定义命令处理 */
+    if (!at_sem_wait(at->recv_lock, MAX_AT_LOCK_TIME))
         return;
     do {
-        len = at->adap.read(&c, 1);
-        urc_recv_process(at, &c,len);
-        resp_recv_process(at, &c, len);
+        len = at->adap.read(buf, sizeof(buf));
+        urc_recv_process(at, buf,len);
+        resp_recv_process(at, buf, len);
     } while (len);
+    
+    at_sem_post(at->recv_lock);
 }
