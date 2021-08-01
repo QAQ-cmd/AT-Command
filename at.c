@@ -277,13 +277,14 @@ static void urc_recv_process(at_obj_t *at, const char *buf, unsigned int size)
     //接收超时处理,默认MAX_URC_RECV_TIMEOUT
     if (at->urc_cnt > 0 && at_istimeout(at->urc_timer, MAX_URC_RECV_TIMEOUT)) {
         urc_buf[at->urc_cnt] = '\0';
-        at->urc_cnt  = 0;
-        at->urc_item = NULL;
         if (at->urc_cnt > 2)
             at->adap.debug("urc recv timeout=>%s\r\n", urc_buf);
+        at->urc_cnt  = 0;
+        at->urc_item = NULL;		
     }    
+	
     while (size--) {
-        at->urc_timer = at_get_ms();
+        at->urc_timer = at_get_ms(); 
         ch =  *buf++;
         urc_buf[at->urc_cnt++] = ch;
         
