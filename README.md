@@ -5,6 +5,8 @@
 ## 介绍
 一种AT命令通信解析模块,支持裸机(at_chat)和OS版本(at)。适用于modem、WIFI模块、蓝牙通信。
 
+gitee仓库导入:[链接](https://gitee.com/smtian/AT-Command)
+
 ## 软件架构
 
 - at_chat.c at_chat.h list.h
